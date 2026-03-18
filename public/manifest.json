@@ -1,0 +1,21 @@
+{
+  "name": "ArtMakeit Tickets",
+  "short_name": "ArtMakeit",
+  "description": "Sistema remoto de impresión de tickets para ArtMakeit",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#a855f7",
+  "icons": [
+    {
+      "src": "/window.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/window.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
