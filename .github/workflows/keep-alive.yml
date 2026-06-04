@@ -1,0 +1,14 @@
+name: Supabase Keep Alive
+on:
+  schedule:
+    - cron: "0 0 * * *" # Runs every day at midnight (UTC)
+  workflow_dispatch: # Allows manual triggering from the GitHub UI
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Auth Health
+        run: |
+          curl -s -i -H "apikey: sb_publishable_UyoXPmL5J3lJMJItYbdoZA_cRCmQ288" "https://xbkdybbgfdnizfbwzkkt.supabase.co/auth/v1/health"
+          echo "Ping successful!"
