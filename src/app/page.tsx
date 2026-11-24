@@ -1,47 +1,116 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { supabase } from '@/lib/supabase';
-import { PlusCircle, MinusCircle, Printer, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Minus, Plus, PlusCircle, Trash2, Printer, CheckCircle2, AlertCircle } from 'lucide-react';
 
 type TicketItem = {
   qty: string;
   description: string;
 };
 
+type Draft = {
+  customerName: string;
+  items: TicketItem[];
+};
+
+const MAX_ITEMS = 20;
+const DRAFT_KEY = 'artmakeit-ticket-draft';
+
+const emptyItem = (): TicketItem => ({ qty: '1', description: '' });
+
+const isTicketItem = (value: unknown): value is TicketItem => {
+  const item = value as TicketItem | null;
+  return typeof item?.qty === 'string' && typeof item?.description === 'string';
+};
+
+function loadDraft(): Draft {
+  const empty: Draft = { customerName: '', items: [emptyItem()] };
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null');
+    if (typeof draft?.customerName !== 'string' || !Array.isArray(draft.items)) return empty;
+    const items = draft.items.filter(isTicketItem).slice(0, MAX_ITEMS);
+    return { customerName: draft.customerName, items: items.length > 0 ? items : empty.items };
+  } catch {
+    return empty;
+  }
+}
+
+// Suma o resta 1 a cantidades enteras; las fracciones como "1/2" se editan a mano.
+function stepQty(qty: string, delta: 1 | -1): string | null {
+  const text = qty.trim();
+  if (text === '') return delta === 1 ? '1' : null;
+  if (!/^\d+$/.test(text)) return null;
+  const next = Number(text) + delta;
+  return next >= 1 ? String(next) : null;
+}
+
+const subscribeNever = () => () => {};
+
 export default function Home() {
-  const [customerName, setCustomerName] = useState('');
-  const [items, setItems] = useState<TicketItem[]>([{ qty: '1', description: '' }]);
+  // El borrador vive en el navegador, así que el formulario solo se monta en el cliente.
+  const isClient = useSyncExternalStore(subscribeNever, () => true, () => false);
+  return isClient ? <TicketForm /> : <div className="min-h-screen bg-neutral-900" />;
+}
+
+function TicketForm() {
+  const [initialDraft] = useState(loadDraft);
+  const [customerName, setCustomerName] = useState(initialDraft.customerName);
+  const [items, setItems] = useState<TicketItem[]>(initialDraft.items);
+  const [formError, setFormError] = useState('');
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ customerName, items }));
+    } catch {
+      // Sin almacenamiento disponible: la app funciona, solo que sin borrador.
+    }
+  }, [customerName, items]);
+
   const handleAddItem = () => {
-    if (items.length < 8) {
-      setItems([...items, { qty: '1', description: '' }]);
+    if (items.length < MAX_ITEMS) {
+      setItems([...items, emptyItem()]);
     }
   };
 
   const handleRemoveItem = (index: number) => {
-    if (items.length > 1) {
-      setItems(items.filter((_, i) => i !== index));
-    }
+    const remaining = items.filter((_, i) => i !== index);
+    // Siempre queda al menos una fila: si se borra la única, se vacía.
+    setItems(remaining.length > 0 ? remaining : [emptyItem()]);
   };
 
-  const handleItemChange = (index: number, field: keyof TicketItem, value: string | number) => {
+  const handleItemChange = (index: number, field: keyof TicketItem, value: string) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
     setItems(newItems);
+    setFormError('');
+  };
+
+  const handleStepQty = (index: number, delta: 1 | -1) => {
+    const next = stepQty(items[index].qty, delta);
+    if (next !== null) handleItemChange(index, 'qty', next);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName || items.some(item => !item.description)) return;
+    const filledItems = items.filter(item => item.description.trim() !== '');
+    if (!customerName.trim()) {
+      setFormError('Escribe el nombre del cliente.');
+      return;
+    }
+    if (filledItems.length === 0) {
+      setFormError('Escribe al menos un ítem.');
+      return;
+    }
+    setFormError('');
 
     setStatus('submitting');
 
     const { error } = await supabase.from('tickets').insert([
       {
         customer_name: customerName,
-        items: items,
+        items: filledItems,
         status: 'pending'
       }
     ]);
@@ -52,7 +121,7 @@ export default function Home() {
     } else {
       setStatus('success');
       setCustomerName('');
-      setItems([{ qty: '1', description: '' }]);
+      setItems([emptyItem()]);
       setTimeout(() => setStatus('idle'), 3000);
     }
   };
@@ -85,7 +154,10 @@ export default function Home() {
                 type="text"
                 id="customerName"
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                onChange={(e) => {
+                  setCustomerName(e.target.value);
+                  setFormError('');
+                }}
                 className="w-full bg-neutral-900/50 border border-neutral-700 rounded-xl px-4 py-3 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
                 placeholder="Ej. Juan Pérez"
                 required
@@ -95,43 +167,66 @@ export default function Home() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <label className="block text-sm font-medium text-neutral-300">
-                  Ítems del Pedido ({items.length}/8)
+                  Ítems del Pedido ({items.length}/{MAX_ITEMS})
                 </label>
               </div>
 
               <div className="space-y-3">
                 {items.map((item, index) => (
-                  <div key={index} className="flex gap-2 items-start group">
-                    <input
-                      type="text"
-                      value={item.qty}
-                      onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
-                      className="w-20 bg-neutral-900/50 border border-neutral-700 rounded-xl px-3 py-3 text-white text-center focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
-                      placeholder="Ej. 1/2"
-                      required
-                    />
+                  <div
+                    key={index}
+                    className="flex flex-wrap sm:flex-nowrap gap-2 items-center rounded-2xl border border-neutral-700/50 p-2 sm:border-0 sm:p-0"
+                  >
                     <input
                       type="text"
                       value={item.description}
                       onChange={(e) => handleItemChange(index, 'description', e.target.value)}
-                      className="flex-1 bg-neutral-900/50 border border-neutral-700 rounded-xl px-4 py-3 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                      aria-label={`Material del ítem ${index + 1}`}
+                      className="order-1 sm:order-2 basis-full sm:basis-0 grow min-w-0 bg-neutral-900/50 border border-neutral-700 rounded-xl px-4 py-3 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
                       placeholder="Ej. 1 hoja 2mm"
-                      required
                     />
-                    {items.length > 1 && (
+                    <div className="order-2 sm:order-1 flex gap-1 shrink-0">
                       <button
                         type="button"
-                        onClick={() => handleRemoveItem(index)}
-                        className="p-3 text-neutral-500 hover:text-red-400 hover:bg-neutral-800 rounded-xl transition-colors shrink-0"
+                        onClick={() => handleStepQty(index, -1)}
+                        disabled={stepQty(item.qty, -1) === null}
+                        aria-label={`Restar cantidad del ítem ${index + 1}`}
+                        className="p-3 text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 rounded-xl transition-colors disabled:opacity-30"
                       >
-                        <MinusCircle className="w-5 h-5" />
+                        <Minus className="w-5 h-5" />
                       </button>
-                    )}
+                      <input
+                        type="text"
+                        value={item.qty}
+                        onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
+                        aria-label={`Cantidad del ítem ${index + 1}`}
+                        className="w-16 bg-neutral-900/50 border border-neutral-700 rounded-xl px-2 py-3 text-white text-center focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                        placeholder="Ej. 1/2"
+                        required={item.description.trim() !== ''}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleStepQty(index, 1)}
+                        disabled={stepQty(item.qty, 1) === null}
+                        aria-label={`Sumar cantidad del ítem ${index + 1}`}
+                        className="p-3 text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 rounded-xl transition-colors disabled:opacity-30"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItem(index)}
+                      aria-label={`Borrar ítem ${index + 1}`}
+                      className="order-3 ml-auto p-3 text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-colors shrink-0"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
                   </div>
                 ))}
               </div>
 
-              {items.length < 8 && (
+              {items.length < MAX_ITEMS && (
                 <button
                   type="button"
                   onClick={handleAddItem}
@@ -143,6 +238,12 @@ export default function Home() {
               )}
             </div>
             
+            {formError && (
+              <p role="alert" className="text-sm text-red-400 text-center">
+                {formError}
+              </p>
+            )}
+
             <button
               type="submit"
               disabled={status === 'submitting'}
